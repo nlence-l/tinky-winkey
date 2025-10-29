@@ -1,6 +1,6 @@
 CC = cl
 CFLAGS = /W4 /WX /nologo /Iinc /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /D_WIN32_WINNT=0x0600 /EHsc /Foobj/
-LDFLAGS = advapi32.lib user32.lib psapi.lib shell32.lib
+LDFLAGS = advapi32.lib user32.lib psapi.lib shell32.lib wtsapi32.lib
 
 all: bin\svc.exe bin\winkey.exe
 
